@@ -82,6 +82,8 @@
 #include <uORB/topics/vehicle_land_detected.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vtol_vehicle_status.h>
+#include <uORB/topics/vehicle_angular_velocity.h>
+#include <uORB/topics/vehicle_rates_setpoint.h>
 
 using math::constrain;
 using systemlib::Hysteresis;
@@ -159,6 +161,11 @@ private:
 	void updateHomePositionYaw(float yaw);
 
 	void update_control_mode();
+
+	bool throw_detected();
+	bool throw_altitude_good();
+	bool throw_height_good();
+	bool throw_position_good();
 
 	// Set the main system state based on RC and override device inputs
 	transition_result_t set_main_state(const vehicle_status_s &status, bool *changed);
@@ -347,6 +354,7 @@ private:
 
 	unsigned int	_leds_counter{0};
 
+	vehicle_rates_setpoint_s _rates_setpoint {}; /**< vehicle bodyrates setpoint */
 	manual_control_setpoint_s	_manual_control_setpoint{};		///< the current manual control setpoint
 	manual_control_setpoint_s	_last_manual_control_setpoint{};	///< the manual control setpoint valid at the last mode switch
 	hrt_abstime	_rc_signal_lost_timestamp{0};		///< Time at which the RC reception was lost
@@ -395,6 +403,8 @@ private:
 	uORB::Subscription					_system_power_sub{ORB_ID(system_power)};
 	uORB::Subscription					_vehicle_acceleration_sub{ORB_ID(vehicle_acceleration)};
 	uORB::Subscription					_vtol_vehicle_status_sub{ORB_ID(vtol_vehicle_status)};
+	uORB::Subscription _vehicle_rates_setpoint_sub{ORB_ID(vehicle_rates_setpoint)}; /**< vehicle bodyrates setpoint subscriber */
+	// uORB::Subscription _angular_velocity_sub{ORB_ID(vehicle_angular_velocity)};	/**< vehicle angular velocity subscription */
 
 	uORB::SubscriptionMultiArray<battery_status_s, battery_status_s::MAX_INSTANCES> _battery_status_subs{ORB_ID::battery_status};
 	uORB::SubscriptionMultiArray<distance_sensor_s>         _distance_sensor_subs{ORB_ID::distance_sensor};
@@ -410,6 +420,8 @@ private:
 	uORB::SubscriptionData<offboard_control_mode_s>		_offboard_control_mode_sub{ORB_ID(offboard_control_mode)};
 	uORB::SubscriptionData<vehicle_global_position_s>	_global_position_sub{ORB_ID(vehicle_global_position)};
 	uORB::SubscriptionData<vehicle_local_position_s>	_local_position_sub{ORB_ID(vehicle_local_position)};
+	uORB::SubscriptionData<vehicle_angular_velocity_s>	_vehicle_rates_sub{ORB_ID(vehicle_angular_velocity)};
+
 
 	// Publications
 	uORB::Publication<actuator_armed_s>			_armed_pub{ORB_ID(actuator_armed)};

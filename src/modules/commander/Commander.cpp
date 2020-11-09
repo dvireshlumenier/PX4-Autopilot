@@ -80,6 +80,9 @@
 #include <math.h>
 #include <float.h>
 #include <cstring>
+// #include <complex.h>
+// #include <bits/stdc++.h>
+
 
 #include <uORB/topics/mavlink_log.h>
 
@@ -102,12 +105,39 @@ static orb_advert_t mavlink_log_pub = nullptr;
 static volatile bool thread_should_exit = false;	/**< daemon exit flag */
 static volatile bool thread_running = false;		/**< daemon status flag */
 
+enum throw_stage{
+	throw_disarmed = 0,
+	throw_detecting,
+	throw_uprighting,
+	throw_hgt_stabilize,
+	land,
+};
+
+throw_stage stage = throw_disarmed;
 
 
 static struct vehicle_status_s status = {};
 static struct actuator_armed_s armed = {};
 
 static struct vehicle_status_flags_s status_flags = {};
+
+// toss to launch flags
+static bool toss_to_launch_enabled = false;
+static bool toss_to_launch_running = false;
+bool ready_to_toss = false; // becomes true if all the pre-requisites are checked
+static bool vehicle_tossed = false; // becomes true if the climb rate > 5 m/s
+
+// turtle mode flags
+bool turtle_mode;
+
+// parameters controlling different stages after the vehicle is tosssed
+bool poshold_command_sent = false;
+bool land_command_sent = false;
+
+// vehicle states after launch
+bool vehicle_stabilized = false;
+bool position_held = false;
+bool vehicle_landed = false;
 
 /**
  * Loop that runs at a lower rate and priority for calibration and parameter tasks.
@@ -2497,6 +2527,170 @@ Commander::run()
 
 		px4_indicate_external_reset_lockout(LockoutComponent::Commander, armed.armed);
 
+		// turtle mode logic
+		if (_internal_state.main_state == commander_state_s::MAIN_STATE_STAB && !armed.armed){
+			// sets the drone to spin the propellors in the opposite direction
+			turtle_mode = true;
+		}else{
+			turtle_mode = false;
+		}
+
+		// toss to launch logic
+
+		// the below portion of the code will make the checks,  then enable or disable the
+		// throw mode.
+		// the below portion of the code will make the checks,  then enable or disable the
+		// throw mode.
+		if(!toss_to_launch_running){
+			if ((double)_manual_control_setpoint.z < 0.1){
+				if(_internal_state.main_state == commander_state_s::MAIN_STATE_ACRO){
+					if(!armed.armed){
+						toss_to_launch_enabled = true;
+					}
+				} else{
+					toss_to_launch_enabled = false;
+					ready_to_toss = false;
+					stage = throw_disarmed;
+				}
+			}
+		}
+
+
+		if (toss_to_launch_enabled) {
+			if (stage == throw_disarmed && ready_to_toss){
+				mavlink_log_info(&mavlink_log_pub, "detecting");
+				toss_to_launch_running = true;
+				stage = throw_detecting;
+			}else  if(stage == throw_detecting && vehicle_tossed){
+				mavlink_log_info(&mavlink_log_pub, "uprighting");
+				stage = throw_uprighting;
+			}else if (stage == throw_uprighting && vehicle_stabilized){
+				mavlink_log_info(&mavlink_log_pub, "pos hold");
+				stage = throw_hgt_stabilize;
+			}
+			else if (stage == throw_hgt_stabilize && position_held){
+				mavlink_log_info(&mavlink_log_pub, "land");
+				stage = land;
+			}
+			else if (vehicle_landed){
+				// reset parameters
+				mavlink_log_info(&mavlink_log_pub, "reseting params");
+				toss_to_launch_enabled = false;
+
+				toss_to_launch_running =  false;
+				ready_to_toss = false;
+				vehicle_tossed = false;
+
+				// stages after launch
+				poshold_command_sent = false;
+				land_command_sent = false;
+
+				// vehicle states after launch
+				vehicle_stabilized = false;
+				position_held = false;
+				vehicle_landed = false;
+
+				stage = throw_disarmed;
+			}
+
+			switch (stage)
+			{
+				case throw_disarmed:
+				{
+					// Checks if the vehicle is ready to be tossed. For now, it only checks to see
+					// if the throttle is completely 0 and rc signal is present. We could add more checks
+					// if needed
+					bool throttle_above_low = (_manual_control_setpoint.z > 0.1f);
+					bool rc_signal_present = status_flags.rc_signal_found_once && !status.rc_signal_lost;
+
+					// TODO: check if vehicle is present on the ground & has a good gps lock
+					if (rc_signal_present && !throttle_above_low){
+						if (!armed.armed){
+							send_vehicle_command(vehicle_command_s::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 0.f);
+						}
+						ready_to_toss = true;
+					}
+				}
+				break;
+				case throw_detecting:
+					if (throw_detected()){
+						mavlink_log_info(&mavlink_log_pub, "vehicle tossed");
+						vehicle_tossed = true;
+					}
+					// return true;
+					break;
+				case throw_uprighting:
+					if (throw_altitude_good()){
+						vehicle_stabilized = true;
+						mavlink_log_info(&mavlink_log_pub, "vehicle stabilized");
+					}
+
+					break;
+				case throw_hgt_stabilize:
+					// is gps is present, then send posctl, else send altctl
+					if (!poshold_command_sent){
+						if (status_flags.condition_global_position_valid && status_flags.condition_local_position_valid){
+
+							mavlink_log_info(&mavlink_log_pub, "pos ctrl command sent");
+							// _internal_state.main_state = commander_state_s::MAIN_STATE_POSCTL;
+							send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_POSCTL);
+							// send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_AUTO,
+							// PX4_CUSTOM_SUB_MODE_AUTO_LOITER);
+							poshold_command_sent = true;
+						}else{ // no gps fix, so alt hold
+							mavlink_log_info(&mavlink_log_pub, "alt ctrl command sent");
+							send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_ALTCTL);
+
+							// below is just another way of changing the mode
+							// _internal_state.main_state = commander_state_s::MAIN_STATE_ALTCTL;
+							poshold_command_sent = true;
+						}
+					} else{
+						mavlink_log_info(&mavlink_log_pub, "lollo");
+						if (_internal_state.main_state == commander_state_s::MAIN_STATE_POSCTL){
+							if (throw_height_good() && throw_position_good()){
+								// send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_AUTO,PX4_CUSTOM_SUB_MODE_AUTO_LAND);
+								mavlink_log_info(&mavlink_log_pub, "land command sent");
+								position_held = true;
+							}
+						}
+						else if (_internal_state.main_state == commander_state_s::MAIN_STATE_ALTCTL){
+							mavlink_log_info(&mavlink_log_pub, "alt here");
+							if (throw_height_good()){
+								// send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_AUTO,PX4_CUSTOM_SUB_MODE_AUTO_LAND);
+								mavlink_log_info(&mavlink_log_pub, "land command sent");
+								position_held = true;
+							}
+						} else {
+							position_held = false;
+						}
+					}
+
+					// 	if (throw_height_good() && throw_position_good()){
+					// 		position_held = true;
+					// 		mavlink_log_info(&mavlink_log_pub, "pos stabilized");
+					// 		// send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_AUTO,PX4_CUSTOM_SUB_MODE_AUTO_LAND);
+					// 		mavlink_log_info(&mavlink_log_pub, "land command sent");
+					// 	}
+					// }else if(_internal_state.main_state == commander_state_s::MAIN_STATE_ALTCTL){
+					// 	if (throw_height_good()){
+					// 		position_held = true;
+					// 		mavlink_log_info(&mavlink_log_pub, "alt stabilized");
+					// 		// send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_AUTO,PX4_CUSTOM_SUB_MODE_AUTO_LAND);
+					// 		mavlink_log_info(&mavlink_log_pub, "land command sent");
+					// 	}
+					break;
+				case land:
+					// if (_land_detector.landed){
+					// 	mavlink_log_info(&mavlink_log_pub, "landed!");
+					// 	vehicle_landed = true;
+
+					// }
+					vehicle_landed = true;
+					break;
+			}
+		}
+
 		px4_usleep(COMMANDER_MONITORING_INTERVAL);
 	}
 
@@ -2516,6 +2710,95 @@ Commander::run()
 	buzzer_deinit();
 
 	thread_running = false;
+}
+
+bool
+Commander::throw_detected(){
+	const vehicle_local_position_s &lpos = _local_position_sub.get();
+
+	// I am using the vertical velocity as climb rate. I could be wrong, so this
+	// could be changed later, if required.
+	// double climb_rate = ( double) lpos.vz;
+
+	float squared_vel = std::pow(lpos.vx, 2) + std::pow(lpos.vy, 2) + std::pow(lpos.vz, 2);
+	float throw_rate = std::sqrt(squared_vel);
+	// std::complex<double> throw_rate (lpos.vx, lpos.vy, lpos.vz);
+	// float climb_rate = std::norm(lpos.vx, lpos.vy, lpos.vz);
+	// mavlink_log_info(&mavlink_log_pub, "throw rate -- %lf", (double)throw_rate);
+	if(throw_rate >  1.5f){
+		return true;
+
+	}else{
+		return false;
+	}
+
+	// // mavlink_log_info(&mavlink_log_pub, "%lf", ( double) lpos.vz);
+	// vehicle_local_position_s lpos_throw_initial{};
+	// hrt_abstime t = NULL;
+
+	//  // Check the vertical acceleraton is greater than 0.25g
+	// bool free_falling =  lpos.az > -0.25f * 9.80655f;
+
+	// // check for upwards or downwards trajectory (airdrop) of 50cm/s
+	// bool changing_height = lpos.vz < - 0.5f;
+	// /*
+	// 	defined in apm
+	// 	bool no_throw_action = scalar norm of accelarations(interial sensors) * 1.0f * 9.80655
+	// */
+
+	// // High velocity or free-fall combined with increasing height indicate a possible air-drop or throw release
+	// bool possible_throw_detected = free_falling && changing_height;
+
+	// // Record time and vertical velocity when we detect the possible throw
+	// if (possible_throw_detected){
+	// 	t = hrt_absolute_time();
+	// 	lpos_throw_initial.vz = lpos.vz;
+	// }
+	// // Once a possible throw condition has been detected, we check for 2.5 m/s of downwards velocity change in less than 0.5 seconds to confirm
+	// bool throw_condition_confirmed = ((hrt_absolute_time() - t < 500) && (lpos.vz - lpos_throw_initial.vz) < -250);
+
+	// // start motors and enter the control mode if we are in continuous freefall
+	// if (throw_condition_confirmed){
+	// 	return true;
+	// }else{
+	// 	return false;
+	// }
+}
+
+bool
+Commander::throw_altitude_good(){
+	bool vehicle_stab_status = false;
+	if (_vehicle_rates_sub.update()){
+		vehicle_angular_velocity_s angular_velocity = _vehicle_rates_sub.get();
+		float squared_ang_vel = std::pow(angular_velocity.xyz[0], 2) + std::pow(angular_velocity.xyz[1], 2) + std::pow(angular_velocity.xyz[2], 2);
+		float angular_rate = std::sqrt(squared_ang_vel);
+		if (angular_rate < 1){
+			vehicle_stab_status = true;
+		}else{
+			vehicle_stab_status = false;
+		}
+	}
+	return vehicle_stab_status;
+}
+
+bool
+Commander::throw_height_good(){
+	// Check that we are within 0.5m of the demanded height
+	const vehicle_local_position_s &lpos = _local_position_sub.get();
+
+	// return (lpos.epv < 0.5f);
+	return ((double) lpos.vz > -0.5 && (double) lpos.vz < 0.5);
+}
+bool
+Commander::throw_position_good(){
+	// check that our horizontal position error is within 50cm
+	const vehicle_local_position_s &lpos = _local_position_sub.get();
+
+	return (lpos.eph < 0.5f);
+	// return (((double) lpos.vx > -0.1 && (double) lpos.vx < 0.1)
+	// 	&& ((double) lpos.vy > -0.1 && (double) lpos.vy < 0.1)
+	// 	&& ((double) lpos.vz > -0.1 && (double) lpos.vz < 0.1));
+
 }
 
 void
@@ -4270,3 +4553,4 @@ The commander module contains the state machine for mode switching and failsafe 
 
 	return 1;
 }
+
