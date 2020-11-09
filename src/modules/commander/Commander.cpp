@@ -80,9 +80,6 @@
 #include <math.h>
 #include <float.h>
 #include <cstring>
-// #include <complex.h>
-// #include <bits/stdc++.h>
-
 
 #include <uORB/topics/mavlink_log.h>
 
@@ -688,7 +685,16 @@ Commander::handle_command(vehicle_status_s *status_local, const vehicle_command_
 
 				} else if (custom_main_mode == PX4_CUSTOM_MAIN_MODE_ACRO) {
 					/* ACRO */
-					main_ret = main_state_transition(*status_local, commander_state_s::MAIN_STATE_ACRO, status_flags, &_internal_state);
+					if ((double)_manual_control_setpoint.z < 0.1){
+						mavlink_log_info(&mavlink_log_pub, "internal state acro");
+						main_ret = main_state_transition(*status_local, commander_state_s::MAIN_STATE_ACRO, status_flags, &_internal_state);
+					}else{
+						mavlink_log_info(&mavlink_log_pub, "acro transition denied");
+						main_ret = TRANSITION_DENIED;
+					}
+
+					// _internal_state.main_state = commander_state_s::MAIN_STATE_ACRO;
+
 
 				} else if (custom_main_mode == PX4_CUSTOM_MAIN_MODE_RATTITUDE) {
 					/* RATTITUDE */
@@ -697,6 +703,7 @@ Commander::handle_command(vehicle_status_s *status_local, const vehicle_command_
 
 				} else if (custom_main_mode == PX4_CUSTOM_MAIN_MODE_STABILIZED) {
 					/* STABILIZED */
+					mavlink_log_info(&mavlink_log_pub, "yo");
 					main_ret = main_state_transition(*status_local, commander_state_s::MAIN_STATE_STAB, status_flags, &_internal_state);
 
 				} else if (custom_main_mode == PX4_CUSTOM_MAIN_MODE_OFFBOARD) {
@@ -2646,16 +2653,13 @@ Commander::run()
 							poshold_command_sent = true;
 						}
 					} else{
-						mavlink_log_info(&mavlink_log_pub, "lollo");
 						if (_internal_state.main_state == commander_state_s::MAIN_STATE_POSCTL){
 							if (throw_height_good() && throw_position_good()){
 								// send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_AUTO,PX4_CUSTOM_SUB_MODE_AUTO_LAND);
-								mavlink_log_info(&mavlink_log_pub, "land command sent");
 								position_held = true;
 							}
 						}
 						else if (_internal_state.main_state == commander_state_s::MAIN_STATE_ALTCTL){
-							mavlink_log_info(&mavlink_log_pub, "alt here");
 							if (throw_height_good()){
 								// send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_AUTO,PX4_CUSTOM_SUB_MODE_AUTO_LAND);
 								mavlink_log_info(&mavlink_log_pub, "land command sent");

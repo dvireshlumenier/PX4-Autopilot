@@ -267,7 +267,12 @@ main_state_transition(const vehicle_status_s &status, const main_state_t new_mai
 	case commander_state_s::MAIN_STATE_STAB:
 	case commander_state_s::MAIN_STATE_ACRO:
 	case commander_state_s::MAIN_STATE_RATTITUDE:
-		ret = TRANSITION_CHANGED;
+		if (status.arming_state == vehicle_status_s::ARMING_STATE_ARMED && new_main_state == commander_state_s::MAIN_STATE_ACRO ){
+			ret = TRANSITION_NOT_CHANGED;
+		}else{
+			ret = TRANSITION_CHANGED;
+		}
+
 		break;
 
 	case commander_state_s::MAIN_STATE_ALTCTL:
