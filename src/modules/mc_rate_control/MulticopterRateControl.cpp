@@ -210,14 +210,31 @@ MulticopterRateControl::Run()
 		if (manual_rate_sp) {
 			if (manual_control_updated) {
 
-				// manual rates control - ACRO mode
+				// Manual Rates Control - ACRO mode
+				// I have disabled this because I have one of the switches set as acro mode - for toss to launch & I do not want the
+				// the user to fly in this mode. This should be used for throw mode only. Though I don't let users to swith to acro mode
+				// if they are already armed and flying in some other mode, it is still possible for them to switch to acro mode - when
+				// the drone is disamed, mode is set to acro and then user sends an arm command. So thats why I am commenting out the
+				// below lines so that even if the user enters acro mode this way, they still cannot takeoff.
+
+				// This is kind of a tempory thing, I am use a variablet to control this sequence or if toss to launch becomes a
+				// stand alone mode in the future, then I will not even have to worry about this.
+
+				// const Vector3f man_rate_sp{
+				// 	math::superexpo(_manual_control_setpoint.y, _param_mc_acro_expo.get(), _param_mc_acro_supexpo.get()),
+				// 	math::superexpo(-_manual_control_setpoint.x, _param_mc_acro_expo.get(), _param_mc_acro_supexpo.get()),
+				// 	math::superexpo(_manual_control_setpoint.r, _param_mc_acro_expo_y.get(), _param_mc_acro_supexpoy.get())};
+
 				const Vector3f man_rate_sp{
-					math::superexpo(_manual_control_setpoint.y, _param_mc_acro_expo.get(), _param_mc_acro_supexpo.get()),
-					math::superexpo(-_manual_control_setpoint.x, _param_mc_acro_expo.get(), _param_mc_acro_supexpo.get()),
-					math::superexpo(_manual_control_setpoint.r, _param_mc_acro_expo_y.get(), _param_mc_acro_supexpoy.get())};
+					math::superexpo(0.0f, _param_mc_acro_expo.get(), _param_mc_acro_supexpo.get()),
+					math::superexpo(0.0f, _param_mc_acro_expo.get(), _param_mc_acro_supexpo.get()),
+					math::superexpo(0.0f, _param_mc_acro_expo_y.get(), _param_mc_acro_supexpoy.get())};
+
+				//  toss to launch acro setpoints
 
 				_rates_sp = man_rate_sp.emult(_acro_rate_max);
-				_thrust_sp = _manual_control_setpoint.z;
+				// _thrust_sp = _manual_control_setpoint.z;
+				_thrust_sp = 0.0f;
 
 				// publish rate setpoint
 				vehicle_rates_setpoint_s v_rates_sp{};
