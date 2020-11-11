@@ -73,18 +73,18 @@ bool PreFlightCheck::accelerometerCheck(orb_advert_t *mavlink_log_pub, vehicle_s
 			}
 
 		} else {
-			const float accel_magnitude = sqrtf(accel.get().x * accel.get().x
-							    + accel.get().y * accel.get().y
-							    + accel.get().z * accel.get().z);
+			// const float accel_magnitude = sqrtf(accel.get().x * accel.get().x
+			// 				    + accel.get().y * accel.get().y
+			// 				    + accel.get().z * accel.get().z);
 
-			if (accel_magnitude < 4.0f || accel_magnitude > 15.0f /* m/s^2 */) {
-				if (report_fail) {
-					mavlink_log_critical(mavlink_log_pub, "Preflight Fail: Accel Range, hold still on arming");
-				}
+			// if (accel_magnitude < 4.0f || accel_magnitude > 15.0f /* m/s^2 */) {
+			// 	if (report_fail) {
+			// 		mavlink_log_critical(mavlink_log_pub, "Preflight Fail: Accel Range, hold still on arming");
+			// 	}
 
-				// this is fatal
-				valid = false;
-			}
+			// 	// this is fatal
+			// 	valid = false;
+			// }
 		}
 
 	} else {

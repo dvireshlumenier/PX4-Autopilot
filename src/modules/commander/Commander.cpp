@@ -802,9 +802,17 @@ Commander::handle_command(vehicle_status_s *status_local, const vehicle_command_
 							break;
 						}
 
+						// if (cmd_arms && throttle_above_low &&
+						//     (status_local->nav_state == vehicle_status_s::NAVIGATION_STATE_MANUAL ||
+						//      status_local->nav_state == vehicle_status_s::NAVIGATION_STATE_ACRO ||
+						//      status_local->nav_state == vehicle_status_s::NAVIGATION_STATE_STAB ||
+						//      status_local->nav_state == vehicle_status_s::NAVIGATION_STATE_RATTITUDE)) {
+						// 	mavlink_log_critical(&mavlink_log_pub, "Arming denied! Throttle not zero");
+						// 	cmd_result = vehicle_command_s::VEHICLE_CMD_RESULT_DENIED;
+						// 	break;
+						// }
 						if (cmd_arms && throttle_above_low &&
 						    (status_local->nav_state == vehicle_status_s::NAVIGATION_STATE_MANUAL ||
-						     status_local->nav_state == vehicle_status_s::NAVIGATION_STATE_ACRO ||
 						     status_local->nav_state == vehicle_status_s::NAVIGATION_STATE_STAB ||
 						     status_local->nav_state == vehicle_status_s::NAVIGATION_STATE_RATTITUDE)) {
 							mavlink_log_critical(&mavlink_log_pub, "Arming denied! Throttle not zero");
@@ -2543,7 +2551,7 @@ Commander::run()
 
 		// toss to launch is enabled when the user switches to acro mode & throttle is set to 0
 		if(!toss_to_launch_running){
-			if ((double)_manual_control_setpoint.z < 0.1){
+			// if ((double)_manual_control_setpoint.z < 0.1){
 				if(_internal_state.main_state == commander_state_s::MAIN_STATE_ACRO){
 					if(!armed.armed){
 						toss_to_launch_enabled = true;
@@ -2551,7 +2559,7 @@ Commander::run()
 				} else{
 					reset_toss_to_launch_parameters();
 				}
-			}
+			// }
 		}else if (toss_to_launch_running && !armed.armed){
 			// this condition is executed when the drone disarms itself because it has been idle for
 			// too long
@@ -2561,7 +2569,6 @@ Commander::run()
 
 		if (toss_to_launch_enabled) {
 			if (stage == throw_disarmed && ready_to_toss){
-				mavlink_log_info(&mavlink_log_pub, "detecting");
 				toss_to_launch_running = true;
 				stage = throw_detecting;
 			}else  if(stage == throw_detecting && vehicle_tossed){
@@ -2586,11 +2593,12 @@ Commander::run()
 					// Checks if the vehicle is ready to be tossed. For now, it only checks to see
 					// if the throttle is completely 0 and rc signal is present. We could add more checks
 					// if needed
-					bool throttle_above_low = (_manual_control_setpoint.z > 0.1f);
+					// bool throttle_above_low = (_manual_control_setpoint.z > 0.1f);
 					bool rc_signal_present = status_flags.rc_signal_found_once && !status.rc_signal_lost;
 
 					// TODO: check if vehicle is present on the ground & has a good gps lock
-					if (rc_signal_present && !throttle_above_low){
+					// if (rc_signal_present && !throttle_above_low){
+					if (rc_signal_present){
 						// if (!armed.armed){
 						// 	send_vehicle_command(vehicle_command_s::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 0.f);
 						// }
@@ -2710,8 +2718,9 @@ Commander::throw_detected(){
 
 	float squared_vel = std::pow(lpos.vx, 2) + std::pow(lpos.vy, 2) + std::pow(lpos.vz, 2);
 	float throw_rate = std::sqrt(squared_vel);
+	bool free_falling =  lpos.az > -0.25f * 9.80655f;
 
-	if(throw_rate >  1.5f){
+	if(throw_rate >  2.5f && free_falling){
 		return true;
 
 	}else{
