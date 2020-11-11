@@ -166,6 +166,7 @@ private:
 	bool throw_altitude_good();
 	bool throw_height_good();
 	bool throw_position_good();
+	bool reset_toss_to_launch_parameters();
 
 	// Set the main system state based on RC and override device inputs
 	transition_result_t set_main_state(const vehicle_status_s &status, bool *changed);

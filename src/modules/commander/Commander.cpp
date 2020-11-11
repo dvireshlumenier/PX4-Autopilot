@@ -685,13 +685,7 @@ Commander::handle_command(vehicle_status_s *status_local, const vehicle_command_
 
 				} else if (custom_main_mode == PX4_CUSTOM_MAIN_MODE_ACRO) {
 					/* ACRO */
-					if ((double)_manual_control_setpoint.z < 0.1){
-						mavlink_log_info(&mavlink_log_pub, "internal state acro");
-						main_ret = main_state_transition(*status_local, commander_state_s::MAIN_STATE_ACRO, status_flags, &_internal_state);
-					}else{
-						mavlink_log_info(&mavlink_log_pub, "acro transition denied");
-						main_ret = TRANSITION_DENIED;
-					}
+
 
 					// _internal_state.main_state = commander_state_s::MAIN_STATE_ACRO;
 
@@ -2546,8 +2540,8 @@ Commander::run()
 
 		// the below portion of the code will make the checks,  then enable or disable the
 		// throw mode.
-		// the below portion of the code will make the checks,  then enable or disable the
-		// throw mode.
+
+		// toss to launch is enabled when the user switches to acro mode & throttle is set to 0
 		if(!toss_to_launch_running){
 			if ((double)_manual_control_setpoint.z < 0.1){
 				if(_internal_state.main_state == commander_state_s::MAIN_STATE_ACRO){
@@ -2555,11 +2549,13 @@ Commander::run()
 						toss_to_launch_enabled = true;
 					}
 				} else{
-					toss_to_launch_enabled = false;
-					ready_to_toss = false;
-					stage = throw_disarmed;
+					reset_toss_to_launch_parameters();
 				}
 			}
+		}else if (toss_to_launch_running && !armed.armed){
+			// this condition is executed when the drone disarms itself because it has been idle for
+			// too long
+			reset_toss_to_launch_parameters();
 		}
 
 
@@ -2580,24 +2576,7 @@ Commander::run()
 				stage = land;
 			}
 			else if (vehicle_landed){
-				// reset parameters
-				mavlink_log_info(&mavlink_log_pub, "reseting params");
-				toss_to_launch_enabled = false;
-
-				toss_to_launch_running =  false;
-				ready_to_toss = false;
-				vehicle_tossed = false;
-
-				// stages after launch
-				poshold_command_sent = false;
-				land_command_sent = false;
-
-				// vehicle states after launch
-				vehicle_stabilized = false;
-				position_held = false;
-				vehicle_landed = false;
-
-				stage = throw_disarmed;
+				reset_toss_to_launch_parameters();
 			}
 
 			switch (stage)
@@ -2612,9 +2591,9 @@ Commander::run()
 
 					// TODO: check if vehicle is present on the ground & has a good gps lock
 					if (rc_signal_present && !throttle_above_low){
-						if (!armed.armed){
-							send_vehicle_command(vehicle_command_s::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 0.f);
-						}
+						// if (!armed.armed){
+						// 	send_vehicle_command(vehicle_command_s::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 0.f);
+						// }
 						ready_to_toss = true;
 					}
 				}
@@ -2622,9 +2601,15 @@ Commander::run()
 				case throw_detecting:
 					if (throw_detected()){
 						mavlink_log_info(&mavlink_log_pub, "vehicle tossed");
-						vehicle_tossed = true;
+						if (!armed.armed){
+							mavlink_log_info(&mavlink_log_pub, "vehicle armed for toss");
+							send_vehicle_command(vehicle_command_s::VEHICLE_CMD_COMPONENT_ARM_DISARM, 1.f, 0.f);
+						}else if (armed.armed){
+							send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_SET_MODE, 1, PX4_CUSTOM_MAIN_MODE_STABILIZED);
+							vehicle_tossed = true;
+						}
+
 					}
-					// return true;
 					break;
 				case throw_uprighting:
 					if (throw_altitude_good()){
@@ -2722,13 +2707,10 @@ Commander::throw_detected(){
 
 	// I am using the vertical velocity as climb rate. I could be wrong, so this
 	// could be changed later, if required.
-	// double climb_rate = ( double) lpos.vz;
 
 	float squared_vel = std::pow(lpos.vx, 2) + std::pow(lpos.vy, 2) + std::pow(lpos.vz, 2);
 	float throw_rate = std::sqrt(squared_vel);
-	// std::complex<double> throw_rate (lpos.vx, lpos.vy, lpos.vz);
-	// float climb_rate = std::norm(lpos.vx, lpos.vy, lpos.vz);
-	// mavlink_log_info(&mavlink_log_pub, "throw rate -- %lf", (double)throw_rate);
+
 	if(throw_rate >  1.5f){
 		return true;
 
@@ -2736,6 +2718,8 @@ Commander::throw_detected(){
 		return false;
 	}
 
+	// Logic below is used in apm to detect the throw, I have a simplified version of it,
+	// which still works
 	// // mavlink_log_info(&mavlink_log_pub, "%lf", ( double) lpos.vz);
 	// vehicle_local_position_s lpos_throw_initial{};
 	// hrt_abstime t = NULL;
@@ -2790,7 +2774,6 @@ Commander::throw_height_good(){
 	// Check that we are within 0.5m of the demanded height
 	const vehicle_local_position_s &lpos = _local_position_sub.get();
 
-	// return (lpos.epv < 0.5f);
 	return ((double) lpos.vz > -0.5 && (double) lpos.vz < 0.5);
 }
 bool
@@ -2799,12 +2782,30 @@ Commander::throw_position_good(){
 	const vehicle_local_position_s &lpos = _local_position_sub.get();
 
 	return (lpos.eph < 0.5f);
-	// return (((double) lpos.vx > -0.1 && (double) lpos.vx < 0.1)
-	// 	&& ((double) lpos.vy > -0.1 && (double) lpos.vy < 0.1)
-	// 	&& ((double) lpos.vz > -0.1 && (double) lpos.vz < 0.1));
-
 }
 
+bool
+Commander::reset_toss_to_launch_parameters(){
+	toss_to_launch_enabled = false;
+
+	toss_to_launch_running =  false;
+	ready_to_toss = false;
+	vehicle_tossed = false;
+
+	// stages after launch
+	poshold_command_sent = false;
+	land_command_sent = false;
+
+	// vehicle states after launch
+	vehicle_stabilized = false;
+	position_held = false;
+	vehicle_landed = false;
+
+	stage = throw_disarmed;
+
+	// not using this bool value anywhere, but I am sure I will, somewhere in the future
+	return true;
+}
 void
 Commander::get_circuit_breaker_params()
 {
